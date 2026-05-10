@@ -763,3 +763,248 @@ This cycle replaces all manual back-and-forth edits to the `.txt` file directly.
 - **Never** invent a new field ID — always use fresh nanoid-style 9-char strings generated at conversion time (§4).
 - **Never** change a field `key` without noting it in the Change Log — keys are used by downstream systems.
 - **Never** silently ignore an `ADD_FIELD` comment because the description is incomplete — always set `Rejected` with a specific list of missing information.
+
+---
+
+## 15. Schema (.txt) → Master Template Excel Conversion Rules
+
+_This section governs how Ah Seng converts a `.txt` schema file into a human-readable master template Excel. The output must match the style and conventions of the canonical reference file (`Advertising_licence__new__-_08_May_1810hrs__master_template_.xlsx`), not dump raw schema values._
+
+---
+
+### 15a. The golden rule
+
+**A–K must be human-readable, not raw schema output.**
+
+The reference file was written by a human who interpreted the schema. Ah Seng must do the same — translate schema tokens and raw JSON into plain English that an agency reviewer can understand without any technical knowledge.
+
+---
+
+### 15b. Output structure
+
+The Excel must have exactly 14 columns:
+
+| Col | Header | Content |
+|-----|--------|---------|
+| A | Section name | Human-readable section header. See §15c. |
+| B | Pre-condition | Plain-English logic. See §15d. |
+| C | Field type | Human-readable type label. See §15e. |
+| D | Field name | `attr.title`. If blank in schema, infer from `key` (camelCase → Title Case). |
+| E | Field Description | `attr.description` cleaned of HTML. If blank, write `Nil`. |
+| F | Field values/options | Bullet list of options (`- Option`). If retrieved/auto-populated, write `Auto-populated`. If no options, write `NA`. |
+| G | Retrieval | Human-readable source. See §15f. |
+| H | Validation | Human-readable validation. See §15g. |
+| I | Required / Optional | `Required` or `Optional`. See §15h. |
+| J | Editable/Non-editable | `Editable` or `Non-editable`. See §15i. |
+| K | Remarks | Any notable build notes. See §15j. |
+| L | Agency Comment | Empty. Light blue fill. Agency writes here. |
+| M | Change Type | Empty. Light blue fill. Dropdown (16 types). |
+| N | Status | Empty. Light blue fill. Dropdown (Pending / Done / Rejected). |
+
+---
+
+### 15c. Column A — Section name
+
+**Row structure rules:**
+
+- **Zone separator rows**: Write a single label in col A with no other content in B–K. Use these for top-level zone labels:
+  - `General Info` — before the generalInfo sections
+  - `Application Details` — before the applicationDetail sections
+
+- **Section header rows**: Write the section name in col A. No other content in B–K. One row per section, even if the section has fields — the fields appear on rows below.
+
+  Exception: if the section is an **addable section**, embed the addable metadata in col A on the same row:
+  ```
+  Sign location (Bus shelter / taxi stand / lamp post)
+  Addable section
+  - Min # of rows: 1
+  - Max # of rows: 2000
+  ```
+
+- **Field rows**: Col A is empty (continuation of current section). Fill B–K.
+
+**Section ordering:**
+1. `General Info` zone label
+2. generalInfo sections in schema order
+3. `Declaration` section (from schema `declaration` block)
+4. `Application Details` zone label
+5. applicationDetail sections in schema order
+
+---
+
+### 15d. Column B — Pre-condition
+
+Write logic in plain English using this template:
+
+```
+IF "<Field name>" is equal to "<value>", SHOW this field
+IF "<Field name>" is either "<value1>" or "<value2>", SHOW this field
+IF "<Field name>" is equal to "<value>", MAKE this field required
+IF "<Field name>" is equal to "<value>" AND "<Field name 2>" is equal to "<value2>", SHOW this field
+```
+
+**Rules:**
+- Use `SHOW this field` for `showIfLogics`
+- Use `MAKE this field required` for `requireIfLogics`
+- Use the **field title** (`attr.title`), not the `fieldId`, as the trigger field reference
+- If multiple conditions on the same field, write each on a new line separated by a blank line
+- If the field has no logic, write `NA` for generalInfo fields and leave blank for applicationDetail fields — unless the section header row carries a pre-condition (addable sections)
+- For section-level logics on addable sections, put the pre-condition on the **section header row** in col B
+
+**Login type logic** (generalInfo standard):
+- Corppass fields → `Logged in as Business User`
+- MyInfo fields → no pre-condition needed (implied by individual login)
+- Filer Detail section → `IF "Profile" is "On behalf of applicant", THEN show this section and Name, ID Type and ID No. fields are "Non-editable". IF "Profile" is "As an applicant", THEN do not show this section`
+
+---
+
+### 15e. Column C — Field type
+
+Map schema `type` to human-readable label:
+
+| Schema type | Col C label |
+|-------------|-------------|
+| `textfield` | `Short Text` |
+| `textarea` | `Long Text` |
+| `dropdown` | `Dropdown` |
+| `radiobutton` | `Radio` |
+| `checkbox` | `Checkbox` |
+| `yes_no` | `Yes/No` |
+| `email` | `Email` |
+| `contactnumber` | `Contact No.` |
+| `date` | `Date` |
+| `number` | `Number` |
+| `decimal` | `Decimal` |
+| `attachment` | `Attachment` |
+| `statement` | `Statement` |
+| `address` | `Address` |
+| `id_type` | `ID Type` |
+| `api` | `AAPI` |
+| `declaration` | `Declaration` |
+| `rowId` | _(leave blank — internal field, no col C value)_ |
+| `rowStatus` | _(leave blank — internal field, no col C value)_ |
+
+**Special case — ID type/number split**: When schema type is `id_type`, write two rows:
+- Row 1: C = `ID Type`, D = `ID Type`
+- Row 2: C = `ID No.`, D = `ID No.`
+
+Both rows share the same pre-condition and retrieval.
+
+**Address fields**: When schema type is `address`, always expand into 4 rows:
+- Row 1: C = `Address`, D = `Postal Code`
+- Row 2: C = `Address`, D = `- Block/House No.\n- Street Name\n- Building Name`
+- Row 3: C = `Address`, D = `Floor/Level`
+- Row 4: C = `Address`, D = `Unit`
+
+All 4 rows share the same pre-condition. Retrieval for ONEMAP-sourced addresses = `Postal code will populate from ONEMAP`.
+
+---
+
+### 15f. Column G — Retrieval
+
+| Schema signal | Col G value |
+|---------------|-------------|
+| Field is in generalInfo + `nonEditable: true` + id starts with `GI_APPLICANT` | `MyInfo` |
+| Field is in generalInfo + `nonEditable: true` + id starts with `GI_COMPANY` | `Corppass` |
+| Field is in generalInfo + `nonEditable: true` + id starts with `GI_FILER` | `MyInfo` |
+| Address type field with postal code | `Postal code will populate from ONEMAP` |
+| `additionalApi` present in attr | `From AAPI "<button label>"` |
+| `nonEditable: true` in applicationDetail (no API) | `Retrieved / Pre-populated` |
+| User-entered field, no retrieval | `Nil` |
+| Statement or declaration | `NA` |
+| Options field (dropdown/radio) with no retrieval | `Nil` |
+
+---
+
+### 15g. Column H — Validation
+
+| Schema signal | Col H value |
+|---------------|-------------|
+| No validation | `Nil` |
+| `customValidation.type = "Maximum"` | `Maximum` |
+| `startDateValidationConfig.type = "Today"` | `Start: Today` |
+| `allowIntContactNumber: true` | `Allow international` |
+| `limitNumber` present | `Nil` _(decimal precision is implicit)_ |
+| `emailConfirmation: true` | `Email confirmation required` |
+| Address Postal Code field | `Postal Code` |
+| Attachment field | `Max file size = 7MB` + description if present |
+| Statement | `NA` |
+
+---
+
+### 15h. Column I — Required / Optional
+
+- `"required": true` → `Required`
+- `"required": false` → `Optional`
+- Address field Row 2 (Block/House/Building) → `All fields typically Required (Building Name may be Optional)`
+- Address field Row 3 (Floor/Level) → `Optional`
+- Address field Row 4 (Unit) → `Optional`
+- Statement / declaration → `NA`
+
+---
+
+### 15i. Column J — Editable / Non-editable
+
+- `"nonEditable": true` → `Non-editable`
+- No `nonEditable` flag → `Editable`
+- Address Row 2 (Block/House/Street/Building — auto-filled from ONEMAP) → `Non-editable`
+- Statement / declaration → `NA`
+
+---
+
+### 15j. Column K — Remarks
+
+Write plain-English notes only when there is something meaningful to flag. Leave blank otherwise. Examples:
+
+- `- This can be non-editable if we toggle-on the setting to not allow 3rd party to apply` (Profile field)
+- `headerComment: <text>` if the section has a headerComment in the schema
+- `menuLabel: <label>` if the section has a menuLabel different from the header
+- Auto-renewal / GIRO notes from `attr.description`
+
+Do **not** dump raw JSON, HTML, or schema IDs into col K.
+
+---
+
+### 15k. Styling rules
+
+Apply the same styling used in §15b table above plus:
+
+| Element | Style |
+|---------|-------|
+| Row 1 headers (A–K) | Dark navy fill (`#1F3864`), white bold Arial 10 |
+| Row 1 headers (L–N) | Light blue fill (`#BDD7EE`), navy bold Arial 10 |
+| Zone separator rows (e.g. "General Info", "Application Details") | Light grey fill, bold |
+| Section header rows | Light periwinkle fill (`#D9E1F2`), bold navy text |
+| Field rows (A–K) | No fill, normal font |
+| Agency columns (L–N all rows) | Very light blue fill (`#EBF3FB`) |
+| Freeze panes | Row 1 + Col A (freeze at B2) |
+| Row 1 height | 36pt |
+
+---
+
+### 15l. What to do with internal/system fields
+
+Skip these field types entirely — do not write a row for them:
+- `rowId`
+- `rowStatus`
+
+They are internal table-management fields with no agency-facing meaning.
+
+---
+
+### 15m. Complete conversion checklist
+
+Before delivering the Excel, Ah Seng must verify:
+
+- [ ] All section headers have their own row with col A filled, B–K empty
+- [ ] Zone labels (`General Info`, `Application Details`) are present
+- [ ] Addable section metadata is embedded in col A of the section header row
+- [ ] Every `id_type` field is expanded into two rows (ID Type + ID No.)
+- [ ] Every `address` field is expanded into four rows (Postal Code, Block/House/Street/Building, Floor, Unit)
+- [ ] All logic uses field **titles** not field IDs
+- [ ] No raw HTML, JSON tokens, or schema IDs appear anywhere in A–K
+- [ ] Col F says `Auto-populated` for MyInfo/Corppass fields, not the raw options list
+- [ ] Col G correctly identifies MyInfo, Corppass, ONEMAP, or Nil
+- [ ] L, M, N columns are present with correct headers, light blue fill, and dropdowns on M and N
+- [ ] No HTML entities (`&nbsp;`, `&amp;`, `<p>`, `<ul>`) appear anywhere
+
