@@ -793,6 +793,30 @@ After building the schema, Ah Seng must:
 - If the field is **newly added** (agency `ADD_FIELD`) → always assign a fresh nanoid
 - If both are existing fields (e.g. two sections both had a field with the same title but different IDs in the original) → restore each to its original ID from the source schema
 
+**Special field types that always cause duplicate label issues if built incorrectly:**
+
+**`id_type` fields:**
+- Must always have `"title": ""` (empty string) in the schema — never `"ID Type"` or any other text
+- LAB renders its own "ID Type" and "ID No." labels internally; setting a title creates a duplicate visible label
+- In the Excel, `id_type` expands into two display rows (ID Type + ID No.) — but in the schema it is always **one field** with `"type": "id_type"`
+- Correct: `{"id": "GI_APPLICANT_DETAIL_ID_TYPE_ID_NUMBER", "attr": {"title": "", "required": true}, "type": "id_type"}`
+
+**`address` fields:**
+- Must always use the **original field ID** — never a random nanoid
+- Must always include the full attr structure: `foreignAddressEnabled`, `withoutPostalCodeEnabled`, `withPostalCodeRequiredConfig`
+- In the Excel, `address` expands into four display rows (Postal Code, Block/House/Street/Building, Floor, Unit) — but in the schema it is always **one field** with `"type": "address"`
+- If `title` is set to "Postal Code" (copied from the first Excel row), LAB renders a duplicate "Postal Code" label on top of its own. Always use the correct title for each section.
+
+Correct `id`, `key`, and `title` for every standard address field:
+
+| Section | Field ID | Key | Title |
+|---------|----------|-----|-------|
+| Applicant Detail (GI) | `GI_APPLICANT_DETAIL_ADDRESS` | `address` | `Address` |
+| Company Detail (GI) | `GI_COMPANY_DETAIL_REGISTERED_ADDRESS` | `registeredAddress` | `Registered Address` |
+| applicationDetail sections | preserve original field ID from source schema | preserve original key | preserve original title (usually `"Address"` or section-specific label) |
+
+For applicationDetail address fields — always look up the original field ID and title from the source `.txt`. Never assign a fresh nanoid to an address field that already existed in the original schema. Never copy the title from the Excel's "Postal Code" row.
+
 ---
 
 ### 14i. Applying this workflow to a new licence (the 200-form scale)
@@ -820,6 +844,8 @@ This cycle replaces all manual back-and-forth edits to the `.txt` file directly.
 - **Never** deliver a `.txt` without running the pre-condition verification step in §14g. Every non-empty col B must have a matching logic entry in the schema — no exceptions, including agency-added rows.
 - **Never** emit logic for fields inside an addable section into top-level `applicationDetailLogics` without first checking if the trigger field is also inside the same section. If both trigger and target are in the same addable section, it must be section-level logic (see §14f).
 - **Never** resolve a field ID by title alone when the same title appears in multiple sections. Always cross-reference against the original schema's field IDs to assign the correct ID to each section's field. Run the duplicate ID check in §14h before delivering any `.txt`.
+- **Never** set a non-empty `title` on an `id_type` field. Always `"title": ""`. LAB renders its own labels — any title you add creates a duplicate visible label in the form.
+- **Never** collapse an `address` field's four Excel rows into four separate schema fields. An address is always one schema field with `"type": "address"`. Never set its title to "Postal Code" — use the correct title ("Address" or "Registered Address") and always include the full attr structure.
 
 ---
 
