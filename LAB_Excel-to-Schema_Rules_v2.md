@@ -849,7 +849,118 @@ This cycle replaces all manual back-and-forth edits to the `.txt` file directly.
 
 ---
 
-## 15. Schema (.txt) → Master Template Excel Conversion Rules
+### 14k. Schema structural rules — IDs, keys, logics, and field properties
+
+These rules come directly from comparing generated schemas against LAB's ground-truth output. Every point below has caused a real bug.
+
+---
+
+**14k-1. Section IDs and keys must be preserved from the original schema**
+
+When converting an Excel back to a `.txt`, every `applicationDetail` section that existed in the original schema must keep its original `id` and `key`. Never assign a fresh nanoid to an existing section.
+
+- Original section IDs are found in the source `.txt` file used to generate the Excel
+- Section `key` must use the original camelCase from the source schema — never lowercase-concatenate the header text
+- Examples of correct section IDs and keys:
+
+| Section header | id | key |
+|---|---|---|
+| Applicant's Declaration | `pbd3v5iej` | `applicantSDeclaration` |
+| Sign Agent's Declaration | `1g08zjzp9` | `signAgentSDeclaration` |
+| Permit to Use (PTU) Declaration | `w08zg8pkx` | `permitToUsePtuDeclaration` |
+| Application/Request Type | `m5z73eo7b` | `applicationRequestType` |
+| Temporary Event and Event Owner Details | `9ju17qvlb` | `temporaryEventAndEventOwnerDetails` |
+| Identical Sign Displays at Recurring Temporary Event | `jy7eo4zxc` | `identicalSignDisplaysAtRecurringTemporaryEvent` |
+| Sign Agent Information | `6xn63vhpy` | `signAgentInformation` |
+
+These are specific to the Recurring Events form. For other forms, always look up the original IDs from the source `.txt`.
+
+---
+
+**14k-2. Statement fields must always have `"key": "statement"`**
+
+Every `"type": "statement"` field must include `"key": "statement"` in the schema. My builder was omitting this key. LAB requires it.
+
+---
+
+**14k-3. `rowId` and `rowStatus` must be included in addable sections**
+
+Addable sections always start with two internal fields:
+```json
+{"id": "rowId", "key": "rowId", "attr": {"title": ""}, "type": "rowId"},
+{"id": "rowStatus", "key": "rowStatus", "attr": {"title": ""}, "type": "rowStatus"}
+```
+These were present in the original schema and must be preserved. My builder was skipping them (per §15l which says to skip them in the Excel display). But §15l only applies to the Excel — they must still be in the `.txt` schema.
+
+---
+
+**14k-4. Field keys must be updated when a field is renamed**
+
+When applying `RENAME_FIELD`, the `key` must also be updated to match the new title in camelCase. Example:
+- "Fixing Method" → "Connecting Details": `key` changes from `fixingMethod` to `connectingDetails`
+
+---
+
+**14k-5. `nonEditable: false` must be explicit when agency changes to Editable**
+
+When applying `CHANGE_EDITABLE` to make a field Editable, set `"nonEditable": false` explicitly in the attr. Do not simply omit `nonEditable` — LAB requires the explicit `false` value.
+
+---
+
+**14k-6. GI logics must be grouped — one logic per condition with multiple targets**
+
+LAB's `generalInfoLogics.showIfLogics` uses **one logic entry per condition**, with all target field IDs in one `actionTargetIds` array. My builder was creating one logic per target field.
+
+Correct pattern:
+```json
+{
+  "id": "SHOW_FILTER_DETAILS_LOGIC",
+  "conditions": [{"state": "is equal to", "value": "On behalf of applicant", "fieldId": "GI_PROFILE_APPLY_AS", "fieldType": "radiobutton"}],
+  "actionTargetIds": ["GI_FILER_DETAIL_SALUTATION", "GI_FILER_DETAIL_NAME", "GI_FILER_DETAIL_ID_TYPE_ID_NUMBER", "GI_FILER_DETAIL_EMAIL", "GI_FILER_DETAIL_CONTACT_NUMBER", "GI_FILER_DETAIL_RECEIVE_STATUS_UPDATES_VIA_SMS"]
+}
+```
+
+The standard GI logic IDs are always `"SHOW_FILTER_DETAILS_LOGIC"` (not nanoids).
+
+---
+
+**14k-7. AD logics must be consolidated — one logic per trigger condition with all targets**
+
+LAB's `applicationDetailLogics.showIfLogics` groups all fields shown by the same condition into **one logic entry with multiple `actionTargetIds`**. My builder was creating one separate logic per field per condition — producing 40 logics where LAB had 8.
+
+Correct approach: after parsing all col B pre-conditions, group entries by identical condition (same trigger field + same state + same value) and consolidate their targets into one `actionTargetIds` array.
+
+---
+
+**14k-8. Checkbox `value` in logic conditions must be an array**
+
+When a checkbox field is the trigger in a logic condition, the `value` must be an array, not a string:
+- Correct: `"value": ["I confirm"]`
+- Wrong: `"value": "I confirm"`
+
+This applies to any field of type `checkbox` used as a logic trigger.
+
+---
+
+**14k-9. Section-level logics must include `sectionId`**
+
+Section-level logics (inside an addable section's own `showIfLogics` / `requireIfLogics`) must include a `"sectionId"` field set to the section's `id`:
+```json
+{
+  "id": "q82db5npj",
+  "sectionId": "jy7eo4zxc",
+  "conditions": [...],
+  "actionTargetIds": [...]
+}
+```
+
+---
+
+**14k-10. REMOVE_SECTION vs renaming — read the intent carefully**
+
+When an agency marks rows `REMOVE_FIELD` on all fields of a section but does not explicitly remove the section header row, they may intend to **rename and repopulate** the section, not remove it entirely. LAB preserved the "Permit to Use (PTU) Declaration" section with new field titles rather than deleting it. Always check whether the section header row itself is marked for removal before deleting a section.
+
+---
 
 _This section governs how Ah Seng converts a `.txt` schema file into a human-readable master template Excel. The output must match the style and conventions of the canonical reference file (`Advertising_licence__new__-_08_May_1810hrs__master_template_.xlsx`), not dump raw schema values._
 
