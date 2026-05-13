@@ -862,6 +862,12 @@ IF "<Field name>" is equal to "<value>" AND "<Field name 2>" is equal to "<value
 
 Map schema `type` to human-readable label:
 
+**CRITICAL — textfield vs textarea:**
+- `"type": "textfield"` → **`Short Text`** (single-line input)
+- `"type": "textarea"` → **`Long Text`** (multi-line input)
+
+These are two different schema types and must never be confused. Never write `"Free Text"` — that label does not exist. It is always either `Short Text` or `Long Text`.
+
 | Schema type | Col C label |
 |-------------|-------------|
 | `textfield` | `Short Text` |
