@@ -711,7 +711,13 @@ The one exception: if the agency explicitly notes that their form omits the "For
 
 ### 14f. Addable section comments
 
-If the commented row is inside an addable section (col A contains "Addable section"), all the same rules apply with one addition: any `ADD_LOGIC` or `CHANGE_LOGIC` that references fields inside the same addable section must be emitted as section-level logic (not form-level), per §5 and §12f.
+If the commented row is inside an addable section (col A contains "Addable section"), all the same rules apply with one addition: any `ADD_LOGIC` or `CHANGE_LOGIC` that references fields inside the same addable section must be emitted as **section-level logic** — inside the section object itself as `showIfLogics` / `requireIfLogics` — **not** in the top-level `applicationDetailLogics` block.
+
+**How to determine if a logic belongs to the section or the form:**
+- Trigger field AND target field are **both inside the same addable section** → emit as **section-level logic**
+- Trigger field is **outside** the addable section (e.g. a GI field or a different AD section) → emit in top-level **`applicationDetailLogics`**
+
+**CRITICAL — this applies to ALL fields inside addable sections, not just commented ones.** When building the schema from the Excel, for every field in an addable section that has a non-empty col B, check where the trigger field lives before deciding where to emit the logic. Never default all logics to top-level `applicationDetailLogics` without performing this check first.
 
 ---
 
@@ -739,9 +745,57 @@ CHANGE LOG — <Licence Name> — <Date>
 No agency comments found. Schema generated from current Excel state.
 ```
 
+**MANDATORY — Pre-condition verification step (run before delivering the .txt):**
+
+After building the schema, Ah Seng must scan every row in the Excel and verify that every non-empty col B has a corresponding logic entry in the schema's `showIfLogics`, `requireIfLogics`, or `setIfLogics`. This applies to ALL rows — existing fields, agency-added fields (`ADD_FIELD`), and modified fields (`ADD_LOGIC`, `CHANGE_LOGIC`).
+
+Steps:
+1. For every row where col B is non-empty, extract the trigger field, condition, value, and action (SHOW / REQUIRE).
+2. Check the schema logics block for a matching entry targeting that field's ID.
+3. If a match exists → OK.
+4. If no match exists → the logic was silently dropped. Add it to the schema immediately and note it in the Change Log under `Notes: Pre-condition wired from col B`.
+5. If the trigger field name in col B cannot be resolved to a field ID in the schema (e.g. field was removed or renamed), set a warning in the Change Log: `"Pre-condition references field '<name>' which does not exist in the schema — Anthony to confirm."`
+6. For every logic entry involving fields inside an **addable section**: verify it is emitted as section-level logic (inside the section object), not in top-level `applicationDetailLogics`. If found in the wrong place, move it and note in Change Log: `"Logic moved to section-level per §14f."`
+
+This step catches the most common failure mode: agency-added fields with pre-conditions in col B that were not wired into the logics block during schema generation.
+
 ---
 
-### 14h. Applying this workflow to a new licence (the 200-form scale)
+### 14h. Duplicate field ID detection and resolution
+
+**Why this happens:** When rebuilding a schema from an Excel, fields are often looked up by their `title` (col D). However, the same title can appear in multiple sections — e.g. "Declaration", "UEN", "Please note the following:", "Email", "Contact Number". If Ah Seng resolves a field ID by title alone, it will grab the first match and assign that ID to all fields with the same title, causing duplicate IDs in the schema.
+
+**Duplicate IDs cause real system failures** — LAB cannot distinguish between two fields with the same ID, leading to wrong logic being applied, wrong fields being shown or hidden, and unpredictable form behaviour.
+
+**MANDATORY — Duplicate ID check before delivering any `.txt`:**
+
+After building the schema, Ah Seng must:
+1. Collect every field `id` across all sections in `generalInfo`, `declaration`, and `applicationDetail`
+2. Check for any ID that appears more than once
+3. For each duplicate found:
+   - Keep the ID on the field that matches the **original schema** (i.e. the field that had that ID before any changes)
+   - Assign a **fresh nanoid** to any other field that incorrectly inherited the same ID
+   - Update any logic entries (`showIfLogics`, `requireIfLogics`, `setIfLogics`) that reference the old duplicate ID — ensure they now point to the correct field
+   - Note every ID fix in the Change Log: `"Duplicate ID resolved: field '<title>' in section '<section>' assigned new ID <new_id>"`
+4. If no duplicates are found, note: `"Duplicate ID check: passed — all field IDs are unique"`
+
+**Common title collisions to watch for:**
+- `"Declaration"` — appears in Applicant's Declaration, Sign Agent's Declaration, and the main Declaration block
+- `"UEN"` — appears in Company Detail (GI), Owner Org Details, Sign Agent Information, and other sections
+- `"Email"` — appears in Applicant Detail (GI), Filer Detail (GI), and multiple AD sections
+- `"Contact Number"` / `"Contact No."` — same issue
+- `"Please note the following:"` — may appear in multiple PTU-related sections
+- `"Event Ref No."` — may appear twice in the same section (user-input version and retrieved version)
+- `"Salutation"`, `"Name"`, `"ID Type"`, `"ID No."` — appear in both Applicant Detail and Filer Detail
+
+**Rule for resolving which field keeps the original ID:**
+- If the field exists in the **original schema** with that ID → keep it
+- If the field is **newly added** (agency `ADD_FIELD`) → always assign a fresh nanoid
+- If both are existing fields (e.g. two sections both had a field with the same title but different IDs in the original) → restore each to its original ID from the source schema
+
+---
+
+### 14i. Applying this workflow to a new licence (the 200-form scale)
 
 For any new licence form — not just Advertising:
 
@@ -756,13 +810,16 @@ This cycle replaces all manual back-and-forth edits to the `.txt` file directly.
 
 ---
 
-### 14i. What Ah Seng must never do without flagging
+### 14j. What Ah Seng must never do without flagging
 
 - **Never** silently drop an unresolved comment (Status blank or `Pending`). If a comment exists, it must end up as `Done` or `Rejected`.
 - **Never** modify the `generalInfo`, `declaration`, or `generalInfoLogics` blocks based on agency comments (see §14d).
 - **Never** invent a new field ID — always use fresh nanoid-style 9-char strings generated at conversion time (§4).
 - **Never** change a field `key` without noting it in the Change Log — keys are used by downstream systems.
 - **Never** silently ignore an `ADD_FIELD` comment because the description is incomplete — always set `Rejected` with a specific list of missing information.
+- **Never** deliver a `.txt` without running the pre-condition verification step in §14g. Every non-empty col B must have a matching logic entry in the schema — no exceptions, including agency-added rows.
+- **Never** emit logic for fields inside an addable section into top-level `applicationDetailLogics` without first checking if the trigger field is also inside the same section. If both trigger and target are in the same addable section, it must be section-level logic (see §14f).
+- **Never** resolve a field ID by title alone when the same title appears in multiple sections. Always cross-reference against the original schema's field IDs to assign the correct ID to each section's field. Run the duplicate ID check in §14h before delivering any `.txt`.
 
 ---
 
@@ -1013,4 +1070,5 @@ Before delivering the Excel, Ah Seng must verify:
 - [ ] Col G correctly identifies MyInfo, Corppass, ONEMAP, or Nil
 - [ ] L, M, N columns are present with correct headers, light blue fill, and dropdowns on M and N
 - [ ] No HTML entities (`&nbsp;`, `&amp;`, `<p>`, `<ul>`) appear anywhere
+- [ ] **Every logic entry in `showIfLogics`, `requireIfLogics`, and `setIfLogics` has been written into the corresponding field's col B in plain English** — no logic should exist in the schema without a matching col B entry in the Excel
 
